@@ -1,6 +1,6 @@
 # Setup fzf
 # ---------
-if [[ ! "$PATH" == *$HOME/Documents/my-git-hub/notes/dotfile/fzf/bin* ]]; then
+if [[ ! "$PATH" == */Users/rajasleem/Documents/my-git-hub/notes/dotfile/fzf/bin* ]]; then
   export PATH="${PATH:+${PATH}:}$HOME/Documents/my-git-hub/notes/dotfile/fzf/bin"
 fi
 
