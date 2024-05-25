@@ -1,0 +1,2 @@
+[submodule "dotfile/fzf"]
+	branch = master
