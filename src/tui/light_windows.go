@@ -1,13 +1,18 @@
-//+build windows
+//go:build windows
 
 package tui
 
 import (
 	"os"
 	"syscall"
+	"time"
 
 	"github.com/junegunn/fzf/src/util"
 	"golang.org/x/sys/windows"
+)
+
+const (
+	timeoutInterval = 10
 )
 
 var (
@@ -60,14 +65,14 @@ func (r *LightRenderer) initPlatform() error {
 
 	// channel for non-blocking reads. Buffer to make sure
 	// we get the ESC sets:
-	r.ttyinChannel = make(chan byte, 12)
+	r.ttyinChannel = make(chan byte, 1024)
 
 	// the following allows for non-blocking IO.
 	// syscall.SetNonblock() is a NOOP under Windows.
 	go func() {
 		fd := int(r.inHandle)
 		b := make([]byte, 1)
-		for {
+		for !r.closed.Get() {
 			// HACK: if run from PSReadline, something resets ConsoleMode to remove ENABLE_VIRTUAL_TERMINAL_INPUT.
 			_ = windows.SetConsoleMode(windows.Handle(r.inHandle), consoleFlagsInput)
 
@@ -86,9 +91,14 @@ func (r *LightRenderer) closePlatform() {
 	windows.SetConsoleMode(windows.Handle(r.inHandle), r.origStateInput)
 }
 
-func openTtyIn() *os.File {
+func openTtyIn() (*os.File, error) {
 	// not used
-	return nil
+	return nil, nil
+}
+
+func openTtyOut() (*os.File, error) {
+	// not used
+	return nil, nil
 }
 
 func (r *LightRenderer) setupTerminal() error {
@@ -105,16 +115,24 @@ func (r *LightRenderer) restoreTerminal() error {
 	return windows.SetConsoleMode(windows.Handle(r.outHandle), r.origStateOutput)
 }
 
-func (r *LightRenderer) updateTerminalSize() {
+func (r *LightRenderer) Size() TermSize {
+	var w, h int
 	var bufferInfo windows.ConsoleScreenBufferInfo
 	if err := windows.GetConsoleScreenBufferInfo(windows.Handle(r.outHandle), &bufferInfo); err != nil {
-		r.width = getEnv("COLUMNS", defaultWidth)
-		r.height = r.maxHeightFunc(getEnv("LINES", defaultHeight))
+		w = getEnv("COLUMNS", defaultWidth)
+		h = r.maxHeightFunc(getEnv("LINES", defaultHeight))
 
 	} else {
-		r.width = int(bufferInfo.Window.Right - bufferInfo.Window.Left)
-		r.height = r.maxHeightFunc(int(bufferInfo.Window.Bottom - bufferInfo.Window.Top))
+		w = int(bufferInfo.Window.Right - bufferInfo.Window.Left)
+		h = r.maxHeightFunc(int(bufferInfo.Window.Bottom - bufferInfo.Window.Top))
 	}
+	return TermSize{h, w, 0, 0}
+}
+
+func (r *LightRenderer) updateTerminalSize() {
+	size := r.Size()
+	r.width = size.Columns
+	r.height = size.Lines
 }
 
 func (r *LightRenderer) findOffset() (row int, col int) {
@@ -130,7 +148,7 @@ func (r *LightRenderer) getch(nonblock bool) (int, bool) {
 		select {
 		case bc := <-r.ttyinChannel:
 			return int(bc), true
-		default:
+		case <-time.After(timeoutInterval * time.Millisecond):
 			return 0, false
 		}
 	} else {

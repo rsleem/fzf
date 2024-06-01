@@ -1,4 +1,4 @@
-// +build !windows
+//go:build !windows
 
 package fzf
 
@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 func notifyOnResize(resizeChan chan<- os.Signal) {
@@ -13,7 +15,12 @@ func notifyOnResize(resizeChan chan<- os.Signal) {
 }
 
 func notifyStop(p *os.Process) {
-	p.Signal(syscall.SIGSTOP)
+	pid := p.Pid
+	pgid, err := unix.Getpgid(pid)
+	if err == nil {
+		pid = pgid * -1
+	}
+	unix.Kill(pid, syscall.SIGSTOP)
 }
 
 func notifyOnCont(resizeChan chan<- os.Signal) {

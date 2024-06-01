@@ -11,28 +11,35 @@
 # - $FZF_ALT_C_COMMAND
 # - $FZF_ALT_C_OPTS
 
+status is-interactive; or exit 0
+
+
 # Key bindings
 # ------------
 function fzf_key_bindings
 
+  function __fzf_defaults
+    # $1: Prepend to FZF_DEFAULT_OPTS_FILE and FZF_DEFAULT_OPTS
+    # $2: Append to FZF_DEFAULT_OPTS_FILE and FZF_DEFAULT_OPTS
+    test -n "$FZF_TMUX_HEIGHT"; or set FZF_TMUX_HEIGHT 40%
+    echo "--height $FZF_TMUX_HEIGHT --bind=ctrl-z:ignore" $argv[1]
+    command cat "$FZF_DEFAULT_OPTS_FILE" 2> /dev/null
+    echo $FZF_DEFAULT_OPTS $argv[2]
+  end
+
   # Store current token in $dir as root for the 'find' command
   function fzf-file-widget -d "List files and folders"
     set -l commandline (__fzf_parse_commandline)
-    set -l dir $commandline[1]
+    set -lx dir $commandline[1]
     set -l fzf_query $commandline[2]
-
-    # "-path \$dir'*/\\.*'" matches hidden files/folders inside $dir but not
-    # $dir itself, even if hidden.
-    test -n "$FZF_CTRL_T_COMMAND"; or set -l FZF_CTRL_T_COMMAND "
-    command find -L \$dir -mindepth 1 \\( -path \$dir'*/\\.*' -o -fstype 'sysfs' -o -fstype 'devfs' -o -fstype 'devtmpfs' \\) -prune \
-    -o -type f -print \
-    -o -type d -print \
-    -o -type l -print 2> /dev/null | sed 's@^\./@@'"
+    set -l prefix $commandline[3]
 
     test -n "$FZF_TMUX_HEIGHT"; or set FZF_TMUX_HEIGHT 40%
     begin
-      set -lx FZF_DEFAULT_OPTS "--height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_CTRL_T_OPTS"
-      eval "$FZF_CTRL_T_COMMAND | "(__fzfcmd)' -m --query "'$fzf_query'"' | while read -l r; set result $result $r; end
+      set -lx FZF_DEFAULT_OPTS (__fzf_defaults "--reverse --walker=file,dir,follow,hidden --scheme=path --walker-root='$dir'" "$FZF_CTRL_T_OPTS")
+      set -lx FZF_DEFAULT_COMMAND "$FZF_CTRL_T_COMMAND"
+      set -lx FZF_DEFAULT_OPTS_FILE ''
+      eval (__fzfcmd)' -m --query "'$fzf_query'"' | while read -l r; set result $result $r; end
     end
     if [ -z "$result" ]
       commandline -f repaint
@@ -42,6 +49,7 @@ function fzf_key_bindings
       commandline -t ""
     end
     for i in $result
+      commandline -it -- $prefix
       commandline -it -- (string escape $i)
       commandline -it -- ' '
     end
@@ -51,7 +59,8 @@ function fzf_key_bindings
   function fzf-history-widget -d "Show command history"
     test -n "$FZF_TMUX_HEIGHT"; or set FZF_TMUX_HEIGHT 40%
     begin
-      set -lx FZF_DEFAULT_OPTS "--height $FZF_TMUX_HEIGHT $FZF_DEFAULT_OPTS --tiebreak=index --bind=ctrl-r:toggle-sort $FZF_CTRL_R_OPTS +m"
+      set -lx FZF_DEFAULT_OPTS (__fzf_defaults "" "--scheme=history --bind=ctrl-r:toggle-sort $FZF_CTRL_R_OPTS +m")
+      set -lx FZF_DEFAULT_OPTS_FILE ''
 
       set -l FISH_MAJOR (echo $version | cut -f1 -d.)
       set -l FISH_MINOR (echo $version | cut -f2 -d.)
@@ -72,22 +81,23 @@ function fzf_key_bindings
 
   function fzf-cd-widget -d "Change directory"
     set -l commandline (__fzf_parse_commandline)
-    set -l dir $commandline[1]
+    set -lx dir $commandline[1]
     set -l fzf_query $commandline[2]
+    set -l prefix $commandline[3]
 
-    test -n "$FZF_ALT_C_COMMAND"; or set -l FZF_ALT_C_COMMAND "
-    command find -L \$dir -mindepth 1 \\( -path \$dir'*/\\.*' -o -fstype 'sysfs' -o -fstype 'devfs' -o -fstype 'devtmpfs' \\) -prune \
-    -o -type d -print 2> /dev/null | sed 's@^\./@@'"
     test -n "$FZF_TMUX_HEIGHT"; or set FZF_TMUX_HEIGHT 40%
     begin
-      set -lx FZF_DEFAULT_OPTS "--height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
-      eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)' +m --query "'$fzf_query'"' | read -l result
+      set -lx FZF_DEFAULT_OPTS (__fzf_defaults "--reverse --walker=dir,follow,hidden --scheme=path --walker-root='$dir'" "$FZF_ALT_C_OPTS")
+      set -lx FZF_DEFAULT_OPTS_FILE ''
+      set -lx FZF_DEFAULT_COMMAND "$FZF_ALT_C_COMMAND"
+      eval (__fzfcmd)' +m --query "'$fzf_query'"' | read -l result
 
       if [ -n "$result" ]
-        cd $result
+        cd -- $result
 
         # Remove last token from commandline.
         commandline -t ""
+        commandline -it -- $prefix
       end
     end
 
@@ -106,19 +116,33 @@ function fzf_key_bindings
     end
   end
 
-  bind \ct fzf-file-widget
   bind \cr fzf-history-widget
-  bind \ec fzf-cd-widget
-
-  if bind -M insert > /dev/null 2>&1
-    bind -M insert \ct fzf-file-widget
-    bind -M insert \cr fzf-history-widget
-    bind -M insert \ec fzf-cd-widget
+  if not set -q FZF_CTRL_T_COMMAND; or test -n "$FZF_CTRL_T_COMMAND"
+    bind \ct fzf-file-widget
+  end
+  if not set -q FZF_ALT_C_COMMAND; or test -n "$FZF_ALT_C_COMMAND"
+    bind \ec fzf-cd-widget
   end
 
-  function __fzf_parse_commandline -d 'Parse the current command line token and return split of existing filepath and rest of token'
+  if bind -M insert > /dev/null 2>&1
+    bind -M insert \cr fzf-history-widget
+    if not set -q FZF_CTRL_T_COMMAND; or test -n "$FZF_CTRL_T_COMMAND"
+      bind -M insert \ct fzf-file-widget
+    end
+    if not set -q FZF_ALT_C_COMMAND; or test -n "$FZF_ALT_C_COMMAND"
+      bind -M insert \ec fzf-cd-widget
+    end
+  end
+
+  function __fzf_parse_commandline -d 'Parse the current command line token and return split of existing filepath, fzf query, and optional -option= prefix'
+    set -l commandline (commandline -t)
+
+    # strip -option= from token if present
+    set -l prefix (string match -r -- '^-[^\s=]+=' $commandline)
+    set commandline (string replace -- "$prefix" '' $commandline)
+
     # eval is used to do shell expansion on paths
-    set -l commandline (eval "printf '%s' "(commandline -t))
+    eval set commandline $commandline
 
     if [ -z $commandline ]
       # Default to current directory with no --query
@@ -138,6 +162,7 @@ function fzf_key_bindings
 
     echo $dir
     echo $fzf_query
+    echo $prefix
   end
 
   function __fzf_get_dir -d 'Find the longest existing filepath from input string'
